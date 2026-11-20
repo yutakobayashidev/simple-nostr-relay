@@ -24,6 +24,9 @@ export const events = sqliteTable(
     eventCompositeIdx: index("kind_composite_idx").on(table.kind, table.created_at),
     authorCreatedAtIdx: index("author_created_at_idx").on(table.author, table.created_at),
     authorKindIdx: index("author_kind_idx").on(table.author, table.kind),
+    // Covers the columns used to pick a page of events found by id (e.g. through tag lookups).
+    // created_at is stored after the large content column, so reading it from the row is expensive.
+    idCoveringIdx: index("id_covering_idx").on(table.id, table.kind, table.created_at, table.hidden, table.replaced),
   }),
 );
 

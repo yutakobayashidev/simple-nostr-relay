@@ -21,7 +21,11 @@ describe(`migration ${PRUNE_MIGRATION}`, () => {
     cpSync("./drizzle", migrationsBefore, { recursive: true });
     const journalPath = join(migrationsBefore, "meta", "_journal.json");
     const journal = JSON.parse(readFileSync(journalPath, "utf8"));
-    journal.entries = journal.entries.filter((entry: { tag: string }) => entry.tag !== PRUNE_MIGRATION);
+    // drizzle only applies migrations newer than the last applied one, so keep everything before the prune migration.
+    journal.entries = journal.entries.slice(
+      0,
+      journal.entries.findIndex((entry: { tag: string }) => entry.tag === PRUNE_MIGRATION),
+    );
     writeFileSync(journalPath, JSON.stringify(journal));
 
     const db = drizzle(new Database(":memory:"), { schema });

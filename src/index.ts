@@ -45,6 +45,10 @@ const sqlite = new Database(config.databasePath);
 // WAL lets concurrent reads proceed while a write is in progress.
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("busy_timeout = 5000");
+// Without statistics the planner can scan every event of a kind instead of following a tag lookup.
+// SQLite recommends this for long-lived connections: https://sqlite.org/pragma.html#pragma_optimize
+sqlite.pragma("optimize = 0x10002");
+setInterval(() => sqlite.pragma("optimize"), 60 * 60 * 1000).unref();
 const db = drizzle(sqlite, { schema });
 const repository = createRepository(db, { enableNIP26, maxQueryLimit: limits.maxQueryLimit });
 

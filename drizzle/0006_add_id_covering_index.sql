@@ -1,0 +1,1 @@
+CREATE INDEX `id_covering_idx` ON `events` (`id`,`kind`,`created_at`,`hidden`,`replaced`);

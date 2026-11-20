@@ -216,13 +216,25 @@ export const createRepository = (db: BetterSQLite3Database<typeof schema>, optio
     const requestedLimit = Math.max(...filters.map((filter) => filter.limit ?? 100));
     const limit = Math.min(options.maxQueryLimit ?? DEFAULT_MAX_QUERY_LIMIT, Math.max(0, Math.floor(requestedLimit)));
 
-    const results = await db
-      .select({ raw: schema.events.raw })
+    // Pick the page by id first: sorting full rows would read the large raw/content value of every match.
+    const page = await db
+      .select({ id: schema.events.id })
       .from(schema.events)
       .where(or(...filters.map((filter) => buildQuery(filter, options))))
       .orderBy(desc(schema.events.created_at), asc(schema.events.id))
       .limit(limit);
+    if (page.length === 0) return [];
 
-    return results.map((result) => result.raw as Event);
+    const rows = await db
+      .select({ id: schema.events.id, raw: schema.events.raw })
+      .from(schema.events)
+      .where(
+        inArray(
+          schema.events.id,
+          page.map((row) => row.id),
+        ),
+      );
+    const rawById = new Map(rows.map((row) => [row.id, row.raw as Event]));
+    return page.flatMap((row) => rawById.get(row.id) ?? []);
   },
 });
