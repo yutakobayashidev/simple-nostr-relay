@@ -21,7 +21,7 @@
           pkgs = import nixpkgs { inherit system; };
           nodejs = pkgs.nodejs_22;
           nodeSources = pkgs.srcOnly nodejs;
-          pnpm = pkgs.pnpm_9;
+          pnpm = pkgs.pnpm;
         in
         {
           default = pkgs.stdenv.mkDerivation (finalAttrs: {
@@ -34,7 +34,7 @@
               inherit (finalAttrs) pname version src;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-jM5WVQHH9+Ta949LxQwnaX4oshkLcIGFO6MR8FrLkqs=";
+              hash = "sha256-KmsoIKPhKSlo5uiJ3PA46m9LM3KyxmmcHe2bzox/aSQ=";
             };
 
             nativeBuildInputs = [
@@ -66,7 +66,7 @@
 
               app_dir="$out/lib/simple-nostr-relay"
               mkdir -p "$app_dir" "$out/bin"
-              cp -R package.json tsconfig.json src scripts drizzle otel node_modules "$app_dir/"
+              cp -R package.json tsconfig.json src scripts drizzle node_modules "$app_dir/"
 
               cat > "$out/bin/simple-nostr-relay" <<EOF
 #!${pkgs.runtimeShell}
@@ -250,7 +250,7 @@ EOF
           default = pkgs.mkShell {
             packages = [
               pkgs.nodejs_22
-              pkgs.pnpm_9
+              pkgs.pnpm
               pkgs.pkg-config
               pkgs.python3
               pkgs.sqlite
