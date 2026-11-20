@@ -84,9 +84,13 @@ const processEvent = async (ws: WSContext, _connectionId: string, payload: Clien
       if (existingEvent) return wsSendPayload(ws, ["OK", event.id, false, "duplicate: event already exists"]);
     }
 
-    if (isReplaceable) await repository.saveReplaceableEvent(event);
-    else if (isTemporaryEvent(event)) await repository.saveTemporaryEvent(event);
-    else if (isParameterizedReplaceable) await repository.saveParameterizedReplaceableEvent(event);
+    if (isReplaceable || isParameterizedReplaceable) {
+      const stored = isReplaceable
+        ? await repository.saveReplaceableEvent(event)
+        : await repository.saveParameterizedReplaceableEvent(event);
+      // An older version than the stored one is acknowledged, but neither stored nor broadcast.
+      if (!stored) return wsSendPayload(ws, ["OK", event.id, true, "duplicate: a newer version is already stored"]);
+    } else if (isTemporaryEvent(event)) await repository.saveTemporaryEvent(event);
     else if (event.kind === 5) {
       const result = validateDeletionEvent(event);
       if (!result.success) return wsSendPayload(ws, ["OK", event.id, false, "invalid: deletion event is invalid"]);

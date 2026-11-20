@@ -36,11 +36,13 @@ const toInsertableEvent = (event: Event) => {
   return { insertableEvent, insertableTags };
 };
 
+// Correlated with the outer row so that the author/kind index drives the lookup,
+// however many events of other authors share the same d value.
 const hasDIdentifierQueryHelper = (dIdentifier: string) => {
-  return sql`${schema.events.id} IN (
-    SELECT ${schema.tags.eventId}
+  return sql`EXISTS (
+    SELECT 1
     FROM ${schema.tags}
-    WHERE ${schema.tags.name} = 'd' AND ${schema.tags.value} = ${dIdentifier}
+    WHERE ${schema.tags.eventId} = ${schema.events.id} AND ${schema.tags.name} = 'd' AND ${schema.tags.value} = ${dIdentifier}
   )`;
 };
 
@@ -91,6 +93,33 @@ const isNewestAmong = (event: Event, existing: { id: string; created_at: Date }[
     return event.created_at > rowCreatedAt || (event.created_at === rowCreatedAt && event.id < row.id);
   });
 
+// NIP-01: relays only keep the newest version of an address, so older versions are deleted with their tags.
+// Returns false when a newer version is already stored.
+const replaceVersions = (db: BetterSQLite3Database<typeof schema>, event: Event, sameAddressQuery: SQL | undefined): boolean => {
+  const { insertableEvent, insertableTags } = toInsertableEvent(event);
+
+  return db.transaction(
+    (tx) => {
+      const existing = tx
+        .select({ id: schema.events.id, created_at: schema.events.created_at })
+        .from(schema.events)
+        .where(sameAddressQuery)
+        .all();
+      if (!isNewestAmong(event, existing)) return false;
+
+      const staleIds = existing.map((row) => row.id);
+      if (staleIds.length > 0) {
+        tx.delete(schema.tags).where(inArray(schema.tags.eventId, staleIds)).run();
+        tx.delete(schema.events).where(inArray(schema.events.id, staleIds)).run();
+      }
+      tx.insert(schema.events).values(insertableEvent).run();
+      insertableTags.length > 0 && tx.insert(schema.tags).values(insertableTags).run();
+      return true;
+    },
+    { behavior: "immediate" },
+  );
+};
+
 export type RepositoryOptions = {
   enableNIP26?: boolean;
   maxQueryLimit?: number;
@@ -107,50 +136,22 @@ export const createRepository = (db: BetterSQLite3Database<typeof schema>, optio
       return true;
     });
   },
-  saveReplaceableEvent: async (event: Event): Promise<void> => {
-    const { insertableEvent, insertableTags } = toInsertableEvent(event);
-    const sameKindQuery = and(eq(schema.events.author, event.pubkey), eq(schema.events.kind, event.kind));
-
-    db.transaction((tx) => {
-      const existing = tx
-        .select({ id: schema.events.id, created_at: schema.events.created_at })
-        .from(schema.events)
-        .where(and(sameKindQuery, eq(schema.events.replaced, false)))
-        .all();
-      if (!isNewestAmong(event, existing)) return;
-
-      tx.update(schema.events).set({ replaced: true }).where(sameKindQuery).run();
-      tx.insert(schema.events).values(insertableEvent).run();
-      insertableTags.length > 0 && tx.insert(schema.tags).values(insertableTags).run();
-    });
+  saveReplaceableEvent: async (event: Event): Promise<boolean> => {
+    return replaceVersions(db, event, and(eq(schema.events.author, event.pubkey), eq(schema.events.kind, event.kind)));
   },
   saveTemporaryEvent: async (_event: Event): Promise<void> => {
     /* Do nothing */
   },
-  saveParameterizedReplaceableEvent: async (event: Event): Promise<void> => {
-    const { insertableEvent, insertableTags } = toInsertableEvent(event);
-
+  saveParameterizedReplaceableEvent: async (event: Event): Promise<boolean> => {
     const d = getTagValuesByName(event, "d");
     if (d.length !== 1) throw new Error("invalid: Parameterized replaceable event should have one d tag with a value");
     const [dIdentifier] = d;
-    const sameAddressQuery = and(
-      eq(schema.events.author, event.pubkey),
-      eq(schema.events.kind, event.kind),
-      hasDIdentifierQueryHelper(dIdentifier),
+
+    return replaceVersions(
+      db,
+      event,
+      and(eq(schema.events.author, event.pubkey), eq(schema.events.kind, event.kind), hasDIdentifierQueryHelper(dIdentifier)),
     );
-
-    db.transaction((tx) => {
-      const existing = tx
-        .select({ id: schema.events.id, created_at: schema.events.created_at })
-        .from(schema.events)
-        .where(and(sameAddressQuery, eq(schema.events.replaced, false)))
-        .all();
-      if (!isNewestAmong(event, existing)) return;
-
-      tx.update(schema.events).set({ replaced: true }).where(sameAddressQuery).run();
-      tx.insert(schema.events).values(insertableEvent).run();
-      insertableTags.length > 0 && tx.insert(schema.tags).values(insertableTags).run();
-    });
   },
   deleteEventsByDeletionEvent: async (event: DeletionEvent): Promise<void> => {
     // NIP-09: targets are referenced by e/a tags; k tags are informational only.

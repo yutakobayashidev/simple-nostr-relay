@@ -146,12 +146,12 @@ describe("Event Repository", () => {
         sk,
       );
 
-      await repository.saveReplaceableEvent(newEvent as unknown as Event);
+      expect(await repository.saveReplaceableEvent(newEvent as unknown as Event)).toBe(true);
       const [replacedEvent] = await repository.queryEventsByFilters([{ kinds: [2], authors: [getPublicKey(sk)] }]);
       expect(replacedEvent).toMatchObject(newEvent);
 
       const rawOldEvent = await db.query.events.findFirst({ where: eq(schema.events.id, event.id) });
-      expect(rawOldEvent?.replaced).toBe(true);
+      expect(rawOldEvent).toBeUndefined();
     });
     it("should save replaceable event from multiple authors", async () => {
       const sk1 = generateSecretKey();
@@ -224,12 +224,46 @@ describe("Event Repository", () => {
         sk,
       );
 
-      await repository.saveParameterizedReplaceableEvent(newEvent as unknown as Event);
-      const [replacedEvent] = await repository.queryEventsByFilters([{ kinds: [30000], authors: [getPublicKey(sk)] }]);
-      expect(replacedEvent).toMatchObject(newEvent);
+      expect(await repository.saveParameterizedReplaceableEvent(newEvent as unknown as Event)).toBe(true);
+      const replacedEvents = await repository.queryEventsByFilters([{ kinds: [30000], authors: [getPublicKey(sk)] }]);
+      expect(replacedEvents).toHaveLength(1);
+      expect(replacedEvents[0]).toMatchObject(newEvent);
 
       const rawOldEvent = await db.query.events.findFirst({ where: eq(schema.events.id, event.id) });
-      expect(rawOldEvent?.replaced).toBe(true);
+      expect(rawOldEvent).toBeUndefined();
+      const oldTags = await db.query.tags.findMany({ where: eq(schema.tags.eventId, event.id) });
+      expect(oldTags).toHaveLength(0);
+    });
+    it("should keep a parameterized replaceable event when another author uses the same d", async () => {
+      const sk1 = generateSecretKey();
+      const sk2 = generateSecretKey();
+      const event1 = finalizeEvent(
+        { kind: 30000, created_at: Math.floor(Date.now() / 1000) - 10, tags: [["d", "shared"]], content: "1" },
+        sk1,
+      );
+      const event2 = finalizeEvent({ kind: 30000, created_at: Math.floor(Date.now() / 1000), tags: [["d", "shared"]], content: "2" }, sk2);
+
+      expect(await repository.saveParameterizedReplaceableEvent(event1 as unknown as Event)).toBe(true);
+      expect(await repository.saveParameterizedReplaceableEvent(event2 as unknown as Event)).toBe(true);
+
+      const events = await repository.queryEventsByFilters([{ kinds: [30000], "#d": ["shared"] }]);
+      expect(events.map((event) => event.id).sort()).toEqual([event1.id, event2.id].sort());
+    });
+    it("should not replace a parameterized replaceable event with an older one", async () => {
+      const sk = generateSecretKey();
+      const newer = finalizeEvent({ kind: 30000, created_at: Math.floor(Date.now() / 1000), tags: [["d", "late"]], content: "newer" }, sk);
+      const older = finalizeEvent(
+        { kind: 30000, created_at: Math.floor(Date.now() / 1000) - 100, tags: [["d", "late"]], content: "older" },
+        sk,
+      );
+
+      expect(await repository.saveParameterizedReplaceableEvent(newer as unknown as Event)).toBe(true);
+      expect(await repository.saveParameterizedReplaceableEvent(older as unknown as Event)).toBe(false);
+
+      const events = await repository.queryEventsByFilters([{ kinds: [30000], authors: [getPublicKey(sk)], "#d": ["late"] }]);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject(newer);
+      expect(await db.query.tags.findMany({ where: eq(schema.tags.eventId, older.id) })).toHaveLength(0);
     });
     it("should reject a parameterized replaceable event without a d-tag value", async () => {
       const sk = generateSecretKey();
@@ -279,7 +313,7 @@ describe("Event Repository", () => {
       expect(savedEvent2).toMatchObject(event2);
 
       const rawOldEvent = await db.query.events.findFirst({ where: eq(schema.events.id, event1.id) });
-      expect(rawOldEvent?.replaced).toBe(false);
+      expect(rawOldEvent).toBeDefined();
 
       const events = await repository.queryEventsByFilters([{ kinds: [30000], authors: [getPublicKey(sk)] }]);
       expect(events).toHaveLength(2);
@@ -322,7 +356,7 @@ describe("Event Repository", () => {
         },
         sk,
       );
-      await repository.saveReplaceableEvent(olderEvent as unknown as Event);
+      expect(await repository.saveReplaceableEvent(olderEvent as unknown as Event)).toBe(false);
 
       const [latestEvent] = await repository.queryEventsByFilters([{ kinds: [2], authors: [getPublicKey(sk)] }]);
       expect(latestEvent).toMatchObject(newerEvent);
